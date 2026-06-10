@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from functools import lru_cache
 from pathlib import Path
 
@@ -63,8 +64,21 @@ def resolve_font(weight):
     return findfont(FontProperties(family="Arial", weight=weight), fallback_to_default=True)
 
 
+def resolve_display_font():
+    candidates = [
+        Path("/System/Library/Fonts/Supplemental/Bodoni 72.ttc"),
+        Path("/System/Library/Fonts/Supplemental/Didot.ttc"),
+        Path("/System/Library/Fonts/Supplemental/Baskerville.ttc"),
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return resolve_font("bold")
+
+
 FONT_REGULAR = resolve_font("normal")
 FONT_BOLD = resolve_font("bold")
+FONT_DISPLAY = resolve_display_font()
 
 COLORS = {
     "ink": (12, 11, 28),
@@ -128,8 +142,11 @@ SIDE_PANELS = [
 
 
 def font(size, bold=True):
-    path = FONT_BOLD if bold else FONT_REGULAR
-    return ImageFont.truetype(path, size)
+    return ImageFont.truetype(FONT_DISPLAY, size)
+
+
+def display_font(size):
+    return ImageFont.truetype(FONT_DISPLAY, size)
 
 
 def ease_out_back(t):
@@ -709,7 +726,17 @@ def draw_side_formula_panels(draw):
     draw_formula_panel(draw, (888, 664, 1052, 910), *SIDE_PANELS[3], COLORS["hot_pink"])
 
 
-def draw_marquee_frame(draw, box, radius, fill, accent, frame_no=0, animate_lights=True, bulb_spacing=52):
+def draw_marquee_frame(
+    draw,
+    box,
+    radius,
+    fill,
+    accent,
+    frame_no=0,
+    animate_lights=True,
+    bulb_spacing=52,
+    alternate_colors=False,
+):
     x1, y1, x2, y2 = box
     canvas = getattr(draw, "canvas", None)
     if canvas is not None:
@@ -733,7 +760,11 @@ def draw_marquee_frame(draw, box, radius, fill, accent, frame_no=0, animate_ligh
             glow = 150 + int(70 * (0.5 + 0.5 * math.sin(frame_no * 0.22 + i * 0.7)))
         else:
             glow = 216
-        bulb_color = COLORS["gold"] if i % 3 else accent
+        if alternate_colors and animate_lights:
+            palette = [COLORS["gold"], COLORS["cyan"], COLORS["hot_pink"], COLORS["lime"]]
+            bulb_color = palette[(i + frame_no // 8) % len(palette)]
+        else:
+            bulb_color = COLORS["gold"] if i % 3 else accent
         if canvas is not None:
             draw_soft_ellipse(canvas, (x - 25, y - 25, x + 25, y + 25), bulb_color, glow * 0.42, 9)
         draw.ellipse((x - 15, y - 15, x + 15, y + 15), fill=(*bulb_color, glow))
@@ -961,10 +992,11 @@ def draw_stage_title_sign(draw, frame_no, kicker, title, subtitle=None, animate_
         frame_no,
         animate_lights,
         bulb_spacing=50,
+        alternate_colors=True,
     )
     draw_star(draw, (WIDTH / 2, 175), 26, (*COLORS["gold"], 240))
-    text_center(draw, (WIDTH / 2, 214), kicker.upper(), font(112), COLORS["gold"], COLORS["black"], 8)
-    text_center(draw, (WIDTH / 2, 344), title.upper(), font(102), COLORS["white"], COLORS["black"], 7)
+    text_center(draw, (WIDTH / 2, 214), kicker.upper(), display_font(116), COLORS["gold"], COLORS["black"], 7)
+    text_center(draw, (WIDTH / 2, 344), title.upper(), display_font(110), COLORS["white"], COLORS["black"], 6)
 
     if subtitle:
         draw_marquee_frame(
@@ -976,6 +1008,7 @@ def draw_stage_title_sign(draw, frame_no, kicker, title, subtitle=None, animate_
             frame_no,
             animate_lights,
             bulb_spacing=48,
+            alternate_colors=True,
         )
         text_center(draw, (WIDTH / 2, 724), subtitle.upper(), font(88), COLORS["hot_pink"], COLORS["black"], 8)
         text_center(draw, (WIDTH / 2, 824), "OR YOU'RE COOKED", font(54), COLORS["gold"], COLORS["black"], 5)
@@ -1005,9 +1038,6 @@ def draw_quiz_header(draw, question, question_index):
         x = 438 + i * 76
         fill = COLORS["gold"] if i <= question_index else COLORS["dim"]
         rounded(draw, (x, 258, x + 52, 278), 10, (*fill, 255), (*COLORS["black"], 255), 2)
-
-    diff_color = COLORS["coral"] if question["difficulty"] == "Hard" else COLORS["gold"]
-    small_chip(draw, question["difficulty"], 806, 130, diff_color)
 
 
 def calm_timer(draw, center, seconds_left, total):
@@ -1096,11 +1126,6 @@ def draw_intro(draw, quiz, local_frame):
         stroke_fill=COLORS["black"],
         stroke_width=4,
     )
-    small_chip(draw, "Timer on", 196, 1318, COLORS["gold"])
-    small_chip(draw, "Lock in", 490, 1318, COLORS["pink"])
-    small_chip(draw, "Show work", 784, 1318, COLORS["lime"])
-    draw_bottom_slogan(draw, "Think. Solve. Succeed.", 1586, COLORS["cyan"])
-
 
 def timer(draw, center, seconds_left, total):
     x, y = center
@@ -1143,10 +1168,6 @@ def draw_question(draw, question, question_index, local_frame, reveal=False):
     local_seconds = local_frame / FPS
 
     draw_marquee_frame(draw, (198, 318, 882, 728), 34, COLORS["ink"], COLORS["gold"], 0, False, 48)
-    rounded(draw, (304, 292, 776, 356), 18, (*COLORS["navy"], 250), (*COLORS["gold"], 240), 4)
-    draw_star(draw, (346, 324), 18, (*COLORS["gold"], 240))
-    draw_star(draw, (734, 324), 18, (*COLORS["gold"], 240))
-    text_center(draw, (WIDTH / 2, 309), question["topic"].upper(), font(27), COLORS["white"], COLORS["black"], 3)
 
     draw_paper_grid(draw, (232, 384, 848, 694))
     prompt_size = fit_size(question["prompt"], 54, 44, 38)
@@ -1223,12 +1244,11 @@ def draw_key_summary_row(draw, question, index, y, color):
     glossy_round(draw, (144, y, 936, y + 172), 24, COLORS["panel"], color, 4, shadow=True)
     rounded(draw, (176, y + 26, 258, y + 108), 24, (*color, 255), (*COLORS["black"], 255), 4)
     text_center(draw, (217, y + 47), f"Q{index + 1}", font(26), COLORS["ink"])
-    draw.text((286, y + 24), question["topic"].upper(), font=font(25), fill=color, stroke_fill=COLORS["black"], stroke_width=2)
 
-    summary = " ".join(visible_text(question.get("keyConcept") or question["explanation"]).split())
+    summary = " ".join(str(question.get("keyConcept") or question["explanation"]).split())
     summary_size = fit_rich_text_width(summary, 28, 478, 21, False)
-    rounded(draw, (286, y + 62, 804, y + 148), 14, (*COLORS["black"], 172), (*COLORS["white"], 42), 2)
-    draw_wrapped(draw, summary, (306, y + 76, 478, 66), summary_size, COLORS["white"], False, "left", line_gap=0)
+    rounded(draw, (286, y + 34, 804, y + 148), 14, (*COLORS["black"], 172), (*COLORS["white"], 42), 2)
+    draw_wrapped(draw, summary, (306, y + 50, 478, 88), summary_size, COLORS["white"], False, "left", line_gap=0)
 
     answer = LABELS[question["correctIndex"]]
     rounded(draw, (820, y + 46, 898, y + 116), 22, (*COLORS["ink"], 255), (*color, 255), 3)
@@ -1238,8 +1258,8 @@ def draw_key_summary_row(draw, question, index, y, color):
 def draw_outro(draw, quiz, local_frame):
     draw_marquee_frame(draw, (150, 166, 930, 492), 42, COLORS["black"], COLORS["hot_pink"], local_frame, True, 50)
     draw_star(draw, (WIDTH / 2, 196), 24, (*COLORS["gold"], 240))
-    text_center(draw, (WIDTH / 2, 236), "GRADE 11 FUNCTIONS", font(60), COLORS["gold"], COLORS["black"], 6)
-    text_center(draw, (WIDTH / 2, 324), "RECAP", font(98), COLORS["white"], COLORS["black"], 8)
+    text_center(draw, (WIDTH / 2, 236), "GRADE 11 FUNCTIONS", display_font(66), COLORS["gold"], COLORS["black"], 5)
+    text_center(draw, (WIDTH / 2, 324), "RECAP", display_font(108), COLORS["white"], COLORS["black"], 7)
     text_center(draw, (WIDTH / 2, 426), quiz["endPrompt"].upper(), font(33), COLORS["hot_pink"], COLORS["black"], 4)
     draw_brand_bug(draw, 72, 138)
     small_chip(draw, "Key recap", 786, 138, COLORS["cyan"])
@@ -1250,11 +1270,6 @@ def draw_outro(draw, quiz, local_frame):
 
     draw_marquee_frame(draw, (218, 1248, 862, 1390), 28, COLORS["deep_red"], COLORS["gold"], local_frame, True, 48)
     draw_wrapped(draw, "Save the recap. Beat your score next round.", (260, 1288, 560, 80), 34, COLORS["white"], True, "center", stroke_fill=COLORS["black"], stroke_width=3)
-    small_chip(draw, "Replay", 196, 1468, COLORS["cyan"])
-    small_chip(draw, "Share", 490, 1468, COLORS["pink"])
-    small_chip(draw, "Review", 784, 1468, COLORS["lime"])
-    draw_bottom_slogan(draw, "Think. Solve. Succeed.", 1628, COLORS["pink"])
-
 
 def progress_bar(draw, frame_in_scene, scene_frames, color):
     pct = max(0, min(1, frame_in_scene / max(1, scene_frames)))
@@ -1532,6 +1547,7 @@ def render_still(quiz, output, frame_no):
 
 
 def main():
+    start_time = time.perf_counter()
     args = sys.argv[1:]
     frame_no = None
     if "--frame" in args:
@@ -1554,6 +1570,9 @@ def main():
     else:
         render_video(quiz, output_path)
         print(f"Rendered {output_path}")
+
+    elapsed = time.perf_counter() - start_time
+    print(f"Render completed in {elapsed:.2f} seconds.")
 
 
 if __name__ == "__main__":
