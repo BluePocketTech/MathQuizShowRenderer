@@ -11,7 +11,7 @@ Visual direction lives in `STYLE_GUIDE.md`. The renderer uses one theatre-marque
 3. For another video, pass a different JSON file:
 
 ```bash
-python scripts/render_quiz.py data/mcr3u-quiz-002.json out/mcr3u-quiz-002.mp4
+python3 scripts/render_quiz.py data/mcr3u-quiz-002.json out/mcr3u-quiz-002.mp4
 ```
 
 Each quiz has 3 questions. Every question controls its own countdown with `timeLimitSeconds`, so harder questions can run longer.
