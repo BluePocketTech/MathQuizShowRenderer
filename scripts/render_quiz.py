@@ -6,6 +6,9 @@ import shutil
 import subprocess
 import sys
 import time
+import argparse
+from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -24,6 +27,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 WIDTH = 1080
 HEIGHT = 1920
 FPS = 30
+BACKGROUND_LOOP_FRAMES = 120
 INTRO_SECONDS = 8.0
 INTRO_STINGER_OFFSET_SECONDS = 4.0
 QUESTION_READ_SECONDS = 3.0
@@ -37,6 +41,8 @@ SFX_ROOT = PROJECT_ROOT / "assets" / "sfx"
 VISUAL_ROOT = PROJECT_ROOT / "assets" / "visual"
 FONT_ROOT = PROJECT_ROOT / "assets" / "fonts"
 STAGE_BACKGROUND_ASSET = VISUAL_ROOT / "stage-background.png"
+DEFAULT_FONT_REGULAR = FONT_ROOT / "LibreBaskerville-Regular.ttf"
+DEFAULT_FONT_BOLD = FONT_ROOT / "LibreBaskerville-Bold.ttf"
 SFX_EXTENSIONS = (".wav", ".mp3", ".m4a")
 SFX_VOLUME = {
     "intro_stinger": 0.82,
@@ -54,8 +60,9 @@ SFX_VOLUME = {
 }
 
 def resolve_font(weight):
+    default_font = DEFAULT_FONT_BOLD if weight == "bold" else DEFAULT_FONT_REGULAR
     candidates = [
-        FONT_ROOT / ("LibreBaskerville-Bold.ttf" if weight == "bold" else "LibreBaskerville-Regular.ttf"),
+        default_font,
         Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf" if weight == "bold" else "/System/Library/Fonts/Supplemental/Arial.ttf"),
         Path("C:/Windows/Fonts/arialbd.ttf" if weight == "bold" else "C:/Windows/Fonts/arial.ttf"),
         Path("C:/Windows/Fonts/calibrib.ttf" if weight == "bold" else "C:/Windows/Fonts/calibri.ttf"),
@@ -68,7 +75,7 @@ def resolve_font(weight):
 
 def resolve_display_font():
     candidates = [
-        FONT_ROOT / "LibreBaskerville-Bold.ttf",
+        DEFAULT_FONT_BOLD,
         Path("/System/Library/Fonts/Supplemental/Bodoni 72.ttc"),
         Path("/System/Library/Fonts/Supplemental/Didot.ttc"),
         Path("/System/Library/Fonts/Supplemental/Baskerville.ttc"),
@@ -128,6 +135,18 @@ COLORS = {
 LABELS = ["A", "B", "C", "D"]
 STYLE_NAME = "Arcade Quiz Blitz"
 MATH_PARSER = MathTextParser("agg")
+
+
+@dataclass(frozen=True)
+class RenderOptions:
+    quality: str = "final"
+    bloom: bool = True
+    grain: bool = True
+    workers: int = 1
+
+
+def default_worker_count():
+    return max(1, (os.cpu_count() or 2) - 1)
 
 CHOICE_PALETTE = [
     (COLORS["red"], COLORS["coral"]),
@@ -288,28 +307,35 @@ def grain_overlay(phase):
     return Image.fromarray(rgba, "RGBA")
 
 
-def finish_frame(img, frame_no, bloom=True, grain=True):
-    img = img.convert("RGBA")
-    if bloom:
-        bloom_size = (WIDTH // 2, HEIGHT // 2)
-        bloom_source = img.resize(bloom_size, Image.Resampling.BILINEAR)
-        bright_mask = bloom_source.convert("L").point(lambda p: 0 if p < 174 else min(150, int((p - 174) * 2.35)))
-        glow = bloom_source.copy()
-        glow.putalpha(bright_mask)
-        glow = glow.filter(ImageFilter.GaussianBlur(6)).resize((WIDTH, HEIGHT), Image.Resampling.BILINEAR)
-        img.alpha_composite(glow)
-
-    if grain:
-        overlay = grain_overlay(frame_no % 24)
-        img = Image.blend(img, Image.alpha_composite(img, overlay), 0.34)
-
+@lru_cache(maxsize=1)
+def vignette_overlay():
     vignette = Image.new("L", (WIDTH, HEIGHT), 0)
     vignette_draw = ImageDraw.Draw(vignette)
     vignette_draw.ellipse((-260, -160, WIDTH + 260, HEIGHT + 120), fill=190)
     vignette = ImageChops.invert(vignette.filter(ImageFilter.GaussianBlur(90)))
     dark = Image.new("RGBA", (WIDTH, HEIGHT), (*COLORS["black"], 64))
     dark.putalpha(vignette.point(lambda p: int(p * 0.55)))
-    img.alpha_composite(dark)
+    return dark
+
+
+def finish_frame(img, frame_no, bloom=True, grain=True, quality="final"):
+    img = img.convert("RGBA")
+    if bloom:
+        downscale = 4 if quality == "draft" else 2
+        blur_radius = 4 if quality == "draft" else 6
+        bloom_size = (WIDTH // downscale, HEIGHT // downscale)
+        bloom_source = img.resize(bloom_size, Image.Resampling.BILINEAR)
+        bright_mask = bloom_source.convert("L").point(lambda p: 0 if p < 174 else min(150, int((p - 174) * 2.35)))
+        glow = bloom_source.copy()
+        glow.putalpha(bright_mask)
+        glow = glow.filter(ImageFilter.GaussianBlur(blur_radius)).resize((WIDTH, HEIGHT), Image.Resampling.BILINEAR)
+        img.alpha_composite(glow)
+
+    if grain:
+        overlay = grain_overlay(frame_no % 24)
+        img = Image.blend(img, Image.alpha_composite(img, overlay), 0.34)
+
+    img.alpha_composite(vignette_overlay())
     return img
 
 
@@ -338,6 +364,11 @@ def fit_size(text, base, long_at, minimum):
 def contains_latex(text):
     text = str(text)
     return "$" in text or "\\" in text
+
+
+def render_as_latex(text):
+    text = str(text).strip()
+    return text.startswith("$") and text.endswith("$") and text.count("$") == 2
 
 
 def latex_tokens(text):
@@ -380,10 +411,10 @@ def latex_size(text, size, bold=True):
 
 
 def rich_text_size(text, size, bold=True):
-    if contains_latex(text):
+    if render_as_latex(text):
         return latex_size(text, size, bold)
 
-    bbox = font(size, bold).getbbox(str(text))
+    bbox = font(size, bold).getbbox(visible_text(text))
     return bbox[2] - bbox[0], bbox[3] - bbox[1]
 
 
@@ -392,6 +423,51 @@ def fit_rich_text_width(text, base, max_width, minimum, bold=True):
     while size > minimum and rich_text_size(text, size, bold)[0] > max_width:
         size -= 2
     return max(minimum, size)
+
+
+def line_height_for(size, contains_math, line_gap):
+    multiplier = 1.28 if contains_math else 1.16
+    return int(size * multiplier) + line_gap
+
+
+def wrapped_lines(draw, text, size, bold, max_width):
+    if render_as_latex(text):
+        return wrap_latex(text, size, bold, max_width)
+    return wrap_text(draw, text, font(size, bold), max_width)
+
+
+def wrapped_text_bounds(draw, text, size, bold, max_width, line_gap):
+    lines = wrapped_lines(draw, text, size, bold, max_width)
+    contains_math = render_as_latex(text)
+    line_height = line_height_for(size, contains_math, line_gap)
+    if not lines:
+        return lines, 0, 0, line_height
+
+    max_line_width = 0
+    for line in lines:
+        line_width, _ = rich_text_size(line, size, bold)
+        max_line_width = max(max_line_width, line_width)
+
+    total_height = line_height * (len(lines) - 1) + rich_text_size(lines[-1], size, bold)[1]
+    return lines, max_line_width, total_height, line_height
+
+
+def fit_wrapped_text_box(draw, text, base, box, minimum, bold=True, line_gap=8):
+    _, _, w, h = box
+    size = base
+    while size > minimum:
+        _, max_line_width, total_height, _ = wrapped_text_bounds(draw, text, size, bold, w, line_gap)
+        if max_line_width <= w and total_height <= h:
+            return size
+        size -= 2
+
+    while size > 12:
+        _, max_line_width, total_height, _ = wrapped_text_bounds(draw, text, size, bold, w, line_gap)
+        if max_line_width <= w and total_height <= h:
+            return size
+        size -= 1
+
+    return max(8, size)
 
 
 def draw_latex(draw, xy, text, size, fill, bold=True, stroke_fill=None, stroke_width=0):
@@ -415,12 +491,12 @@ def draw_latex(draw, xy, text, size, fill, bold=True, stroke_fill=None, stroke_w
 
 
 def draw_rich_text(draw, xy, text, size, fill, bold=True, stroke_fill=None, stroke_width=0):
-    if contains_latex(text):
+    if render_as_latex(text):
         draw_latex(draw, xy, text, size, fill, bold, stroke_fill, stroke_width)
     else:
         draw.text(
             xy,
-            text,
+            visible_text(text),
             font=font(size, bold),
             fill=fill,
             stroke_fill=stroke_fill,
@@ -441,15 +517,21 @@ def draw_choice_text(draw, box, choice, text_color, alpha, base_size=52, minimum
     stroke_width = 1 if dark_text else 3
     rounded(draw, inner_box, 14, (*inner_fill, inner_fill_alpha), (*inner_outline, inner_outline_alpha), 2)
 
-    size = fit_rich_text_width(choice, base_size, x2 - x1 - 44, minimum_size)
-    _, text_height = rich_text_size(choice, size, True)
+    content_x = x1 + 24
+    content_y = y1 + 9
+    content_w = x2 - x1 - 48
+    content_h = y2 - y1 - 18
+    line_gap = -2
+    size = fit_wrapped_text_box(draw, choice, base_size, (content_x, content_y, content_w, content_h), minimum_size, True, line_gap)
+    lines, _, text_height, line_height = wrapped_text_bounds(draw, choice, size, True, content_w, line_gap)
     text_x = x1 + 24
-    text_y = y1 + (y2 - y1 - text_height) / 2 - (3 if contains_latex(choice) else 2)
-    draw_rich_text(draw, (text_x, text_y), choice, size, text_color, True, stroke_fill, stroke_width)
+    text_y = y1 + (y2 - y1 - text_height) / 2 - (3 if render_as_latex(choice) else 2)
+    for i, line in enumerate(lines):
+        draw_rich_text(draw, (text_x, text_y + i * line_height), line, size, text_color, True, stroke_fill, stroke_width)
 
 
 def wrap_text(draw, text, font_obj, max_width):
-    words = str(text).split()
+    words = visible_text(text).split()
     lines = []
     current = ""
     for word in words:
@@ -482,12 +564,13 @@ def wrap_latex(text, size, bold, max_width):
 
 def text_center(draw, xy, text, font_obj, fill, stroke_fill=None, stroke_width=0):
     x, y = xy
-    if contains_latex(text):
+    if render_as_latex(text):
         size = getattr(font_obj, "size", 32)
         width, _ = latex_size(text, size, True)
         draw_latex(draw, (x - width / 2, y), text, size, fill, True, stroke_fill, stroke_width)
         return
 
+    text = visible_text(text)
     box = draw.textbbox((0, 0), text, font=font_obj)
     draw.text(
         (x - (box[2] - box[0]) / 2, y),
@@ -510,12 +593,13 @@ def draw_wrapped(
     line_gap=8,
     stroke_fill=None,
     stroke_width=0,
+    minimum_size=12,
 ):
-    x, y, w, _ = box
+    x, y, w, h = box
+    size = fit_wrapped_text_box(draw, text, size, box, minimum_size, bold, line_gap)
     font_obj = font(size, bold)
-    if contains_latex(text):
-        lines = wrap_latex(text, size, bold, w)
-        line_height = int(size * 1.28) + line_gap
+    if render_as_latex(text):
+        lines, _, _, line_height = wrapped_text_bounds(draw, text, size, bold, w, line_gap)
         for i, line in enumerate(lines):
             line_y = y + i * line_height
             line_width, _ = latex_size(line, size, bold)
@@ -523,8 +607,7 @@ def draw_wrapped(
             draw_latex(draw, (line_x, line_y), line, size, fill, bold, stroke_fill, stroke_width)
         return
 
-    lines = wrap_text(draw, text, font_obj, w)
-    line_height = int(size * 1.16) + line_gap
+    lines, _, _, line_height = wrapped_text_bounds(draw, text, size, bold, w, line_gap)
     for i, line in enumerate(lines):
         line_y = y + i * line_height
         if align == "center":
@@ -532,7 +615,7 @@ def draw_wrapped(
         else:
             draw.text(
                 (x, line_y),
-                line,
+                visible_text(line),
                 font=font_obj,
                 fill=fill,
                 stroke_fill=stroke_fill,
@@ -919,7 +1002,12 @@ def draw_showtime_background(frame_no, animate_lights=True, side_panels=False, c
 
 
 def loud_background(frame_no):
-    return draw_showtime_background(frame_no, animate_lights=True, side_panels=False, confetti=True)
+    return loud_background_cached(frame_no % BACKGROUND_LOOP_FRAMES).copy()
+
+
+@lru_cache(maxsize=BACKGROUND_LOOP_FRAMES)
+def loud_background_cached(loop_frame):
+    return draw_showtime_background(loop_frame, animate_lights=True, side_panels=False, confetti=True)
 
 
 @lru_cache(maxsize=1)
@@ -1108,6 +1196,147 @@ def draw_quiz_choice_button(draw, box, fill, outline, text_color, label_fill, la
     )
     text_center(draw, (x1 + offset + 61, y1 + 37), label, font(34), label_text, COLORS["black"], 1)
     draw_choice_text(draw, (x1 + offset + 122, y1 + 24, x2 + offset - 28, y2 - 22), choice, text_color, rgba_alpha)
+
+
+def question_cache_key(question):
+    return json.dumps(question, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+
+
+def question_from_key(question_key):
+    return json.loads(question_key)
+
+
+def draw_question_prompt(draw, question, question_index):
+    draw_quiz_header(draw, question, question_index)
+    draw_marquee_frame(draw, (198, 318, 882, 728), 34, COLORS["ink"], COLORS["gold"], 0, False, 48)
+    draw_paper_grid(draw, (232, 384, 848, 694))
+    prompt_size = fit_size(question["prompt"], 54, 44, 38)
+    draw_wrapped(
+        draw,
+        question["prompt"],
+        (262, 462, 556, 170),
+        prompt_size,
+        COLORS["black"],
+        True,
+        "center",
+        stroke_fill=None,
+        stroke_width=0,
+    )
+
+
+def draw_question_choices(draw, question, local_seconds, reveal=False):
+    for idx, choice in enumerate(question["choices"]):
+        y = 794 + idx * 132
+        offset = 0
+        is_correct = idx == question["correctIndex"]
+        base_fill, base_outline = CHOICE_PALETTE[idx]
+
+        if reveal and is_correct:
+            fill, outline, text_color = COLORS["green"], COLORS["lime"], COLORS["white"]
+            label_fill, label_text = COLORS["black"], COLORS["green"]
+        elif reveal:
+            fill, outline, text_color = COLORS["quiz_wrong"], COLORS["quiz_row_edge"], COLORS["quiz_muted"]
+            label_fill, label_text = COLORS["black"], COLORS["quiz_muted"]
+        else:
+            fill = base_fill
+            outline = base_outline
+            text_color = COLORS["white"]
+            label_fill, label_text = COLORS["black"], COLORS["white"]
+
+        if reveal:
+            alpha = 126 if not is_correct else 255
+        else:
+            pop_start = CHOICE_POP_START_SECONDS + idx * CHOICE_POP_STAGGER_SECONDS
+            pop_t = (local_seconds - pop_start) / CHOICE_POP_ANIMATION_SECONDS
+            if pop_t <= 0:
+                alpha = 0
+                offset = 56
+            else:
+                eased = ease_out_back(pop_t)
+                alpha = int(255 * ease_in_out(pop_t))
+                offset = max(0, int((1 - min(1, eased)) * 56))
+
+        draw_quiz_choice_button(
+            draw,
+            (204, y, 876, y + 108),
+            fill,
+            outline,
+            text_color,
+            label_fill,
+            label_text,
+            LABELS[idx],
+            choice,
+            alpha,
+            offset,
+        )
+
+
+def draw_reveal_details(draw, question):
+    text_center(draw, (WIDTH / 2, 1346), f"CORRECT ANSWER: {LABELS[question['correctIndex']]}", font(38), COLORS["green"], COLORS["black"], 3)
+    draw_marquee_frame(draw, (198, 1398, 882, 1558), 26, COLORS["ink"], COLORS["green"], 0, False, 52)
+    explanation_size = fit_size(question["explanation"], 34, 70, 27)
+    draw_wrapped(draw, question["explanation"], (238, 1442, 604, 92), explanation_size, COLORS["white"], False, "center")
+    draw_marquee_frame(draw, (218, 1604, 862, 1732), 28, COLORS["deep_red"], COLORS["gold"], 0, False, 48)
+    text_center(draw, (WIDTH / 2, 1626), "CORRECT!", font(76), COLORS["gold"], COLORS["black"], 6)
+
+
+@lru_cache(maxsize=12)
+def question_prompt_plate(question_key, question_index):
+    question = question_from_key(question_key)
+    img = quiz_background(0)
+    draw = ImageDraw.Draw(img, "RGBA")
+    draw.canvas = img
+    draw_question_prompt(draw, question, question_index)
+    return img
+
+
+@lru_cache(maxsize=12)
+def question_choices_plate(question_key, question_index):
+    question = question_from_key(question_key)
+    img = question_prompt_plate(question_key, question_index).copy()
+    draw = ImageDraw.Draw(img, "RGBA")
+    draw.canvas = img
+    draw_question_choices(draw, question, 999, False)
+    return img
+
+
+@lru_cache(maxsize=6)
+def reveal_plate(question_key, question_index):
+    question = question_from_key(question_key)
+    img = question_prompt_plate(question_key, question_index).copy()
+    draw = ImageDraw.Draw(img, "RGBA")
+    draw.canvas = img
+    draw_question_choices(draw, question, 0, True)
+    draw_reveal_details(draw, question)
+    return img
+
+
+def render_question_scene(question, question_index, local_frame):
+    question_key = question_cache_key(question)
+    local_seconds = local_frame / FPS
+    final_pop_time = (
+        CHOICE_POP_START_SECONDS
+        + (len(question["choices"]) - 1) * CHOICE_POP_STAGGER_SECONDS
+        + CHOICE_POP_ANIMATION_SECONDS
+    )
+    if local_seconds >= final_pop_time:
+        img = question_choices_plate(question_key, question_index).copy()
+    else:
+        img = question_prompt_plate(question_key, question_index).copy()
+        draw = ImageDraw.Draw(img, "RGBA")
+        draw.canvas = img
+        draw_question_choices(draw, question, local_seconds, False)
+
+    draw = ImageDraw.Draw(img, "RGBA")
+    draw.canvas = img
+    countdown_elapsed = max(0, local_seconds - QUESTION_READ_SECONDS)
+    seconds_left = min(question["timeLimitSeconds"], question["timeLimitSeconds"] - countdown_elapsed)
+    calm_timer(draw, (WIDTH // 2, 1532), seconds_left, question["timeLimitSeconds"])
+    return img
+
+
+def render_reveal_scene(question, question_index):
+    return reveal_plate(question_cache_key(question), question_index).copy()
 
 
 def draw_intro(draw, quiz, local_frame):
@@ -1452,7 +1681,8 @@ def audio_mix_args(cues, duration_seconds):
     ]
 
 
-def render_frame(quiz, global_frame, items):
+def render_frame(quiz, global_frame, items, options=None):
+    options = options or RenderOptions()
     cursor = 0
 
     for kind, idx, frames in items:
@@ -1466,17 +1696,11 @@ def render_frame(quiz, global_frame, items):
             elif kind == "transition_to_quiz":
                 img = transition_background(global_frame, local, frames, True)
             elif kind == "question":
-                img = quiz_background(global_frame)
-                draw = ImageDraw.Draw(img, "RGBA")
-                draw.canvas = img
                 question = quiz["questions"][idx]
-                draw_question(draw, question, idx, local, False)
+                img = render_question_scene(question, idx, local)
             elif kind == "reveal":
-                img = quiz_background(global_frame)
-                draw = ImageDraw.Draw(img, "RGBA")
-                draw.canvas = img
                 question = quiz["questions"][idx]
-                draw_question(draw, question, idx, local, True)
+                img = render_reveal_scene(question, idx)
             elif kind == "transition_to_outro":
                 img = transition_background(global_frame, local, frames, False)
             else:
@@ -1484,13 +1708,18 @@ def render_frame(quiz, global_frame, items):
                 draw = ImageDraw.Draw(img, "RGBA")
                 draw.canvas = img
                 draw_outro(draw, quiz, local)
-            return finish_frame(img, global_frame).convert("RGB")
+            return finish_frame(img, global_frame, options.bloom, options.grain, options.quality).convert("RGB")
         cursor += frames
 
-    return finish_frame(loud_background(global_frame), global_frame).convert("RGB")
+    return finish_frame(loud_background(global_frame), global_frame, options.bloom, options.grain, options.quality).convert("RGB")
 
 
-def render_video(quiz, output):
+def render_frame_bytes_job(job):
+    quiz, frame_no, items, options = job
+    return render_frame(quiz, frame_no, items, options).tobytes()
+
+
+def render_video(quiz, output, options):
     items = timeline(quiz)
     total_frames = sum(item[2] for item in items)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -1526,11 +1755,20 @@ def render_video(quiz, output):
 
     process = subprocess.Popen(command, stdin=subprocess.PIPE)
     try:
-        for frame_no in range(total_frames):
-            frame = render_frame(quiz, frame_no, items)
-            process.stdin.write(frame.tobytes())
-            if frame_no % FPS == 0:
-                print(f"Rendered frame {frame_no + 1}/{total_frames}", flush=True)
+        if options.workers > 1:
+            jobs = ((quiz, frame_no, items, options) for frame_no in range(total_frames))
+            chunksize = max(1, min(FPS, total_frames // (options.workers * 8) if options.workers else 1))
+            with ProcessPoolExecutor(max_workers=options.workers) as executor:
+                for frame_no, frame_bytes in enumerate(executor.map(render_frame_bytes_job, jobs, chunksize=chunksize)):
+                    process.stdin.write(frame_bytes)
+                    if frame_no % FPS == 0:
+                        print(f"Rendered frame {frame_no + 1}/{total_frames}", flush=True)
+        else:
+            for frame_no in range(total_frames):
+                frame = render_frame(quiz, frame_no, items, options)
+                process.stdin.write(frame.tobytes())
+                if frame_no % FPS == 0:
+                    print(f"Rendered frame {frame_no + 1}/{total_frames}", flush=True)
     finally:
         if process.stdin:
             process.stdin.close()
@@ -1540,38 +1778,62 @@ def render_video(quiz, output):
         raise RuntimeError(f"ffmpeg exited with code {code}")
 
 
-def render_still(quiz, output, frame_no):
+def render_still(quiz, output, frame_no, options):
     items = timeline(quiz)
     total_frames = sum(item[2] for item in items)
     safe_frame = max(0, min(frame_no, total_frames - 1))
     output.parent.mkdir(parents=True, exist_ok=True)
-    render_frame(quiz, safe_frame, items).save(output)
+    render_frame(quiz, safe_frame, items, options).save(output)
     print(f"Rendered frame {safe_frame} to {output}")
+
+
+def parse_args(argv):
+    parser = argparse.ArgumentParser(description="Render a vertical MCR3U quiz video.")
+    parser.add_argument("input", nargs="?", default="data/mcr3u-quiz-001.json")
+    parser.add_argument("output", nargs="?", default="out/mcr3u-quiz-001.mp4")
+    parser.add_argument("--frame", type=int, help="Render a single still frame instead of a video.")
+    parser.add_argument("--quality", choices=["final", "draft", "preview"], default="final")
+    parser.add_argument("--workers", type=int, default=None, help="Worker processes for video rendering.")
+    parser.add_argument("--no-bloom", action="store_true", help="Disable final bloom pass.")
+    parser.add_argument("--no-grain", action="store_true", help="Disable final grain pass.")
+    return parser.parse_args(argv)
+
+
+def render_options_from_args(args):
+    if args.quality == "preview":
+        bloom = False
+        grain = False
+    elif args.quality == "draft":
+        bloom = True
+        grain = False
+    else:
+        bloom = True
+        grain = True
+
+    if args.no_bloom:
+        bloom = False
+    if args.no_grain:
+        grain = False
+
+    workers = args.workers if args.workers is not None else default_worker_count()
+    return RenderOptions(args.quality, bloom, grain, max(1, workers))
 
 
 def main():
     start_time = time.perf_counter()
-    args = sys.argv[1:]
-    frame_no = None
-    if "--frame" in args:
-        frame_arg_index = args.index("--frame")
-        try:
-            frame_no = int(args[frame_arg_index + 1])
-        except (IndexError, ValueError) as exc:
-            raise ValueError("--frame must be followed by a frame number") from exc
-        args = args[:frame_arg_index] + args[frame_arg_index + 2 :]
-
-    input_path = Path(args[0] if len(args) > 0 else "data/mcr3u-quiz-001.json")
-    output_path = Path(args[1] if len(args) > 1 else "out/mcr3u-quiz-001.mp4")
+    args = parse_args(sys.argv[1:])
+    options = render_options_from_args(args)
+    input_path = Path(args.input)
+    output_path = Path(args.output)
 
     with input_path.open("r", encoding="utf-8") as file:
         quiz = json.load(file)
 
     validate_quiz(quiz)
-    if frame_no is not None or output_path.suffix.lower() in [".png", ".jpg", ".jpeg"]:
-        render_still(quiz, output_path, frame_no if frame_no is not None else 300)
+    if args.frame is not None or output_path.suffix.lower() in [".png", ".jpg", ".jpeg"]:
+        render_still(quiz, output_path, args.frame if args.frame is not None else 300, options)
     else:
-        render_video(quiz, output_path)
+        render_video(quiz, output_path, options)
         print(f"Rendered {output_path}")
 
     elapsed = time.perf_counter() - start_time

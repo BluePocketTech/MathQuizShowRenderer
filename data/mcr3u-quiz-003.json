@@ -1,0 +1,28 @@
+{
+  "title": "MCR3U Functions Quiz",
+  "subtitle": "3 questions. Pick before the timer hits zero.",
+  "endPrompt": "How many did you get right?",
+  "questions": [
+    {
+      "prompt": "State the restrictions of $f(x)=\\frac{x+2}{(x-4)(x+1)}$.",
+      "choices": ["$x \\neq -2,4$", "$x \\neq -1,4$", "$x \\neq -4,1$", "$x \\neq -1,2$"],
+      "correctIndex": 1,
+      "timeLimitSeconds": 12,
+      "explanation": "Restrictions come from denominator zeros: $(x-4)(x+1)=0$, so $x \\neq 4,-1$."
+    },
+    {
+      "prompt": "State the domain of $f(x)=\\sqrt{-(x-3)}$.",
+      "choices": ["$x \\geq 3$", "$x > 3$", "$x \\leq 3$", "All real numbers"],
+      "correctIndex": 2,
+      "timeLimitSeconds": 15,
+      "explanation": "The radicand must be non-negative: $-(x-3) \\geq 0$, so $x \\leq 3$."
+    },
+    {
+      "prompt": "A bacteria culture starts with $500$ cells and triples every $4$ hours. Let $t$ be time in hours and $P(t)$ be the number of cells. Which model represents the situation?",
+      "choices": ["$P(t)=500(3)^t$", "$P(t)=500(3)^{\\frac{t}{4}}$", "$P(t)=3(500)^{\\frac{t}{4}}$", "$P(t)=500+3\\left(\\frac{t}{4}\\right)$"],
+      "correctIndex": 1,
+      "timeLimitSeconds": 20,
+      "explanation": "Tripling every $4$ hours means the exponent counts groups of $4$ hours: $P(t)=500(3)^{t/4}$."
+    }
+  ]
+}

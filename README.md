@@ -11,7 +11,7 @@ Visual direction lives in `STYLE_GUIDE.md`. The renderer uses one theatre-marque
 3. For another video, pass a different JSON file:
 
 ```bash
-python3 scripts/render_quiz.py data/mcr3u-quiz-002.json out/mcr3u-quiz-002.mp4
+python3 scripts/render_quiz.py data/mcr3u-quiz-003.json out/mcr3u-quiz-003.mp4
 ```
 
 Each quiz has 3 questions. Every question controls its own countdown with `timeLimitSeconds`, so harder questions can run longer.
@@ -33,6 +33,10 @@ The renderer uses Matplotlib mathtext to draw LaTeX-style expressions, so choice
 ```json
 "choices": ["$\\left(0,0\\right)$", "$\\left(0,2\\right)$", "$\\left(0,3\\right)$", "$\\left(3,0\\right)$"]
 ```
+
+## Fonts
+
+The renderer defaults to the bundled Libre Baskerville fonts in `assets/fonts/` for regular, bold, and display text. System fonts are only fallbacks if those assets are missing.
 
 ## Requirements
 
