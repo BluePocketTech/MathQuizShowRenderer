@@ -35,6 +35,7 @@ TRANSITION_SECONDS = 0.65
 OUTRO_SECONDS = 5.6
 SFX_ROOT = PROJECT_ROOT / "assets" / "sfx"
 VISUAL_ROOT = PROJECT_ROOT / "assets" / "visual"
+FONT_ROOT = PROJECT_ROOT / "assets" / "fonts"
 STAGE_BACKGROUND_ASSET = VISUAL_ROOT / "stage-background.png"
 SFX_EXTENSIONS = (".wav", ".mp3", ".m4a")
 SFX_VOLUME = {
@@ -54,6 +55,7 @@ SFX_VOLUME = {
 
 def resolve_font(weight):
     candidates = [
+        FONT_ROOT / ("LibreBaskerville-Bold.ttf" if weight == "bold" else "LibreBaskerville-Regular.ttf"),
         Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf" if weight == "bold" else "/System/Library/Fonts/Supplemental/Arial.ttf"),
         Path("C:/Windows/Fonts/arialbd.ttf" if weight == "bold" else "C:/Windows/Fonts/arial.ttf"),
         Path("C:/Windows/Fonts/calibrib.ttf" if weight == "bold" else "C:/Windows/Fonts/calibri.ttf"),
@@ -66,6 +68,7 @@ def resolve_font(weight):
 
 def resolve_display_font():
     candidates = [
+        FONT_ROOT / "LibreBaskerville-Bold.ttf",
         Path("/System/Library/Fonts/Supplemental/Bodoni 72.ttc"),
         Path("/System/Library/Fonts/Supplemental/Didot.ttc"),
         Path("/System/Library/Fonts/Supplemental/Baskerville.ttc"),

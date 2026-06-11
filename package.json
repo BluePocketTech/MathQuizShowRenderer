@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "render": "python3 scripts/render_quiz.py data/mcr3u-quiz-001.json out/mcr3u-quiz-001.mp4",
-    "render:sample": "python3 scripts/render_quiz.py data/mcr3u-quiz-001.json out/mcr3u-quiz-001.mp4",
-    "preview:frame": "python3 scripts/render_quiz.py data/mcr3u-quiz-001.json out/style-preview.png --frame 330",
-    "check": "python3 -m py_compile scripts/render_quiz.py"
+    "render": "python scripts/render_quiz.py data/mcr3u-quiz-001.json out/mcr3u-quiz-001.mp4",
+    "render:sample": "python scripts/render_quiz.py data/mcr3u-quiz-001.json out/mcr3u-quiz-001.mp4",
+    "preview:frame": "python scripts/render_quiz.py data/mcr3u-quiz-001.json out/style-preview.png --frame 330",
+    "check": "python -m py_compile scripts/render_quiz.py"
   }
 }
