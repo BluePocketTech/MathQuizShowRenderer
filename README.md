@@ -14,7 +14,7 @@ Visual direction lives in `STYLE_GUIDE.md`. The renderer uses one theatre-marque
 python3 scripts/render_quiz.py data/mcr3u-quiz-003.json out/mcr3u-quiz-003.mp4
 ```
 
-Each quiz has 3 questions. Every question controls its own countdown with `timeLimitSeconds`, so harder questions can run longer.
+Each quiz has 3 questions. Every question controls its own countdown with `timeLimitSeconds`, so harder questions can run longer. Add `questionReadSeconds` to control the lead-in time before the countdown starts; if omitted, it defaults to 3 seconds.
 
 ## Sound Effects
 

@@ -148,6 +148,10 @@ class RenderOptions:
 def default_worker_count():
     return max(1, (os.cpu_count() or 2) - 1)
 
+
+def question_read_seconds(question):
+    return float(question.get("questionReadSeconds", QUESTION_READ_SECONDS))
+
 CHOICE_PALETTE = [
     (COLORS["red"], COLORS["coral"]),
     (COLORS["royal"], COLORS["cyan"]),
@@ -368,7 +372,8 @@ def contains_latex(text):
 
 def render_as_latex(text):
     text = str(text).strip()
-    return text.startswith("$") and text.endswith("$") and text.count("$") == 2
+    dollar_count = text.count("$")
+    return dollar_count >= 2 and dollar_count % 2 == 0
 
 
 def latex_tokens(text):
@@ -1314,6 +1319,7 @@ def reveal_plate(question_key, question_index):
 def render_question_scene(question, question_index, local_frame):
     question_key = question_cache_key(question)
     local_seconds = local_frame / FPS
+    read_seconds = question_read_seconds(question)
     final_pop_time = (
         CHOICE_POP_START_SECONDS
         + (len(question["choices"]) - 1) * CHOICE_POP_STAGGER_SECONDS
@@ -1329,7 +1335,7 @@ def render_question_scene(question, question_index, local_frame):
 
     draw = ImageDraw.Draw(img, "RGBA")
     draw.canvas = img
-    countdown_elapsed = max(0, local_seconds - QUESTION_READ_SECONDS)
+    countdown_elapsed = max(0, local_seconds - read_seconds)
     seconds_left = min(question["timeLimitSeconds"], question["timeLimitSeconds"] - countdown_elapsed)
     calm_timer(draw, (WIDTH // 2, 1532), seconds_left, question["timeLimitSeconds"])
     return img
@@ -1467,7 +1473,8 @@ def draw_question(draw, question, question_index, local_frame, reveal=False):
         draw_marquee_frame(draw, (218, 1604, 862, 1732), 28, COLORS["deep_red"], COLORS["gold"], 0, False, 48)
         text_center(draw, (WIDTH / 2, 1626), "CORRECT!", font(76), COLORS["gold"], COLORS["black"], 6)
     else:
-        countdown_elapsed = max(0, local_seconds - QUESTION_READ_SECONDS)
+        read_seconds = question_read_seconds(question)
+        countdown_elapsed = max(0, local_seconds - read_seconds)
         seconds_left = min(question["timeLimitSeconds"], question["timeLimitSeconds"] - countdown_elapsed)
         calm_timer(draw, (WIDTH // 2, 1532), seconds_left, question["timeLimitSeconds"])
 
@@ -1522,6 +1529,8 @@ def validate_quiz(quiz):
             raise ValueError(f"Question {i} correctIndex must be 0, 1, 2, or 3.")
         if question.get("timeLimitSeconds", 0) < 3:
             raise ValueError(f"Question {i} timeLimitSeconds must be at least 3.")
+        if question_read_seconds(question) < 0:
+            raise ValueError(f"Question {i} questionReadSeconds must be at least 0.")
         validate_math_delimiters(question.get("prompt", ""), f"Question {i} prompt")
         validate_math_delimiters(question.get("explanation", ""), f"Question {i} explanation")
         for choice_index, choice in enumerate(question.get("choices", []), start=1):
@@ -1539,7 +1548,7 @@ def timeline(quiz):
         ("transition_to_quiz", None, int(TRANSITION_SECONDS * FPS)),
     ]
     for idx, question in enumerate(quiz["questions"]):
-        items.append(("question", idx, int((QUESTION_READ_SECONDS + question["timeLimitSeconds"]) * FPS)))
+        items.append(("question", idx, int((question_read_seconds(question) + question["timeLimitSeconds"]) * FPS)))
         items.append(("reveal", idx, int(REVEAL_SECONDS * FPS)))
     items.append(("transition_to_outro", None, int(TRANSITION_SECONDS * FPS)))
     items.append(("outro", None, int(OUTRO_SECONDS * FPS)))
@@ -1568,13 +1577,15 @@ def sound_cue_events(quiz, items):
         elif kind == "transition_to_quiz":
             add_sfx_cue(cues, "transition_whoosh", cursor)
         elif kind == "question":
-            duration_seconds = quiz["questions"][idx]["timeLimitSeconds"]
+            question = quiz["questions"][idx]
+            duration_seconds = question["timeLimitSeconds"]
+            read_seconds = question_read_seconds(question)
             for choice_index in range(4):
                 add_sfx_cue(cues, "choice_pop", cursor, CHOICE_POP_START_SECONDS + choice_index * CHOICE_POP_STAGGER_SECONDS)
             for tick_second in range(1, int(math.ceil(duration_seconds))):
                 seconds_left = duration_seconds - tick_second
                 cue_name = "urgency_tick" if seconds_left <= 3 else "countdown_tick"
-                add_sfx_cue(cues, cue_name, cursor, QUESTION_READ_SECONDS + tick_second)
+                add_sfx_cue(cues, cue_name, cursor, read_seconds + tick_second)
         elif kind == "reveal":
             add_sfx_cue(cues, "reveal_hit", cursor)
             add_sfx_cue(cues, "correct_chime", cursor, 0.18)
