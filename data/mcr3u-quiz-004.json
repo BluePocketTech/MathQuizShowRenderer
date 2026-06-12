@@ -1,0 +1,31 @@
+{
+  "title": "MCR3U Functions Quiz",
+  "subtitle": "3 questions. Pick before the timer hits zero.",
+  "endPrompt": "How many did you get right?",
+  "questions": [
+    {
+      "prompt": "A family of quadratic functions is given by $f(x)=a(x-3)(x+2)$, where $a \\neq 0$. What property is shared by every function in the family?",
+      "choices": ["Vertex at $\\left(-2,3\\right)$", "$y$-intercept of $-6$", "Max value of $5$", "$x$-intercepts at $3$ and $-2$"],
+      "correctIndex": 3,
+      "questionReadSeconds": 6,
+      "timeLimitSeconds": 10,
+      "explanation": "Factored form shows the zeros. Every function has $x$-intercepts $3$ and $-2$."
+    },
+    {
+      "prompt": "If $f(x)=x^2+3$, simplify $f\\left(\\sqrt{x+2}\\right)$.",
+      "choices": ["$x+2$", "$x+5$", "$\\sqrt{x+5}$", "$x^2+5$"],
+      "correctIndex": 1,
+      "questionReadSeconds": 4,
+      "timeLimitSeconds": 12,
+      "explanation": "Substitute $\\sqrt{x+2}$ into $f$: $\\left(\\sqrt{x+2}\\right)^2+3=x+2+3=x+5$."
+    },
+    {
+      "prompt": "Determine the exact value of $\\sin 330^\\circ$.",
+      "choices": ["$-1/2$", "$1/2$", "$\\sqrt{3}/2$", "$-\\sqrt{3}/2$"],
+      "correctIndex": 0,
+      "questionReadSeconds": 4,
+      "timeLimitSeconds": 10,
+      "explanation": "$330^\\circ$ has reference angle $30^\\circ$ and is in quadrant IV, where sine is negative. So $\\sin 330^\\circ=-1/2$."
+    }
+  ]
+}
